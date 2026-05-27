@@ -739,9 +739,17 @@ class AgentModeController(
             put("preview_path", previewPath)
             state.cursorX?.let { put("cursor_x", it) }
             state.cursorY?.let { put("cursor_y", it) }
-            put("screenshot_mime_type", AgentModeCaptureMimeType)
-            put("screenshot_base64", Base64.encodeToString(bytes, Base64.NO_WRAP))
-            put("stdout", "Captured Agent Mode screenshot: $workspacePath")
+            if (settings.agentModeUiTreeOnly) {
+                val uiTreeRaw = requireAgentModeService(settings).dumpUiTree(displayId)
+                val elements = JSONArray(uiTreeRaw)
+                put("ui_tree_elements", elements)
+                put("stdout", "Captured Agent Mode screenshot: $workspacePath  " +
+                    "(UI tree only mode — ${elements.length()} interactive elements)")
+            } else {
+                put("screenshot_mime_type", AgentModeCaptureMimeType)
+                put("screenshot_base64", Base64.encodeToString(bytes, Base64.NO_WRAP))
+                put("stdout", "Captured Agent Mode screenshot: $workspacePath")
+            }
         }.toString()
     }
 

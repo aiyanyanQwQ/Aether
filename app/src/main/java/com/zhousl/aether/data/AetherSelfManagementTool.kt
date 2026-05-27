@@ -390,6 +390,17 @@ class AetherSelfManagementTool(
                 } else {
                     current.agentModeAuthorizationMethod
                 },
+                agentModeUiTreeOnly = if (
+                    patch.hasAny("ui_tree_only", "agent_mode_ui_tree_only")
+                ) {
+                    patch.optBooleanAny(
+                        "ui_tree_only",
+                        "agent_mode_ui_tree_only",
+                        current.agentModeUiTreeOnly,
+                    )
+                } else {
+                    current.agentModeUiTreeOnly
+                },
             )
 
             else -> return failure("Unsupported or read-only category '$category'.")
@@ -796,6 +807,7 @@ class AetherSelfManagementTool(
         JSONObject()
             .put("authorization_enabled", settings.agentModeAuthorizationEnabled)
             .put("authorization_method", settings.agentModeAuthorizationMethod.storageValue)
+            .put("ui_tree_only", settings.agentModeUiTreeOnly)
             .put("authorization", agentModeAuthorizationStateJson(agentModeController.authorizationState.value))
             .put("display", agentModeDisplayStateJson(agentModeController.displayState.value))
 

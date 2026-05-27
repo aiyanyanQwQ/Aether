@@ -136,6 +136,7 @@ data class AppSettings(
     val termuxEnvironmentVariables: List<TermuxEnvironmentVariable> = emptyList(),
     val agentModeAuthorizationEnabled: Boolean = false,
     val agentModeAuthorizationMethod: AgentModeAuthorizationMethod = AgentModeAuthorizationMethod.Shizuku,
+    val agentModeUiTreeOnly: Boolean = false,
     val language: AppLanguage = defaultAppLanguage(),
     val themeMode: AppThemeMode = AppThemeMode.System,
     val defaultChatModelKey: String = "",

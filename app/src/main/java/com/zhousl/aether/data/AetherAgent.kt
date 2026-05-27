@@ -577,8 +577,9 @@ class AetherAgent(
     ): String {
         if (toolName != "agent_display") return output
         val parsed = runCatching { JSONObject(output) }.getOrNull() ?: return output
-        if (!parsed.has("screenshot_base64")) return output
+        if (!parsed.has("screenshot_base64") && !parsed.has("ui_tree_elements")) return output
         parsed.remove("screenshot_base64")
+        parsed.remove("ui_tree_elements")
         parsed.put("screenshot_injected_into_next_model_request", true)
         return parsed.toString()
     }
@@ -586,16 +587,33 @@ class AetherAgent(
     private fun buildAgentDisplayScreenshotMessage(output: String): LlmMessage? {
         val parsed = runCatching { JSONObject(output) }.getOrNull() ?: return null
         if (!parsed.optBoolean("ok")) return null
+        val displayId = parsed.opt("display_id")?.toString().orEmpty()
+        val displayLabel = if (displayId.isNotBlank() && displayId != "null") " for display $displayId" else ""
+
+        // UI-tree-only mode: the tool output includes ui_tree_elements instead of a screenshot image
+        val uiTreeElements = parsed.optJSONArray("ui_tree_elements")
+        if (uiTreeElements != null) {
+            val elementsText = uiTreeElements.toString(2)
+            return LlmMessage(
+                role = "user",
+                contentParts = listOf(
+                    LlmTextPart(
+                        "Latest Agent Mode virtual display UI tree$displayLabel with " +
+                            "${uiTreeElements.length()} interactive elements:\n\n```json\n$elementsText\n```"
+                    ),
+                ),
+            )
+        }
+
+        // Legacy screenshot mode
         val base64Data = parsed.optString("screenshot_base64").takeIf { it.isNotBlank() }
             ?: return null
         val mimeType = parsed.optString("screenshot_mime_type").ifBlank { "image/png" }
-        val displayId = parsed.opt("display_id")?.toString().orEmpty()
         return LlmMessage(
             role = "user",
             contentParts = listOf(
                 LlmTextPart(
-                    "Latest Agent Mode virtual display screenshot" +
-                        if (displayId.isNotBlank() && displayId != "null") " for display $displayId." else "."
+                    "Latest Agent Mode virtual display screenshot$displayLabel."
                 ),
                 LlmImagePart(
                     mimeType = mimeType,

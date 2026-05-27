@@ -49,6 +49,7 @@ class SettingsRepository(
                 preferences[AGENT_MODE_AUTHORIZATION_METHOD],
                 defaultValue = defaultAgentModeAuthorizationMethod(context),
             ),
+            agentModeUiTreeOnly = preferences[AGENT_MODE_UI_TREE_ONLY] ?: false,
             language = AppLanguage.fromStorage(preferences[LANGUAGE]),
             themeMode = AppThemeMode.fromStorage(preferences[THEME_MODE]),
             defaultChatModelKey = preferences[DEFAULT_CHAT_MODEL_KEY].orEmpty(),
@@ -164,6 +165,7 @@ class SettingsRepository(
                 serializeTermuxEnvironmentVariables(settings.termuxEnvironmentVariables)
             it[AGENT_MODE_AUTHORIZATION_ENABLED] = settings.agentModeAuthorizationEnabled
             it[AGENT_MODE_AUTHORIZATION_METHOD] = settings.agentModeAuthorizationMethod.storageValue
+            it[AGENT_MODE_UI_TREE_ONLY] = settings.agentModeUiTreeOnly
             it[LANGUAGE] = settings.language.storageValue
             it[THEME_MODE] = settings.themeMode.storageValue
             it[DEFAULT_CHAT_MODEL_KEY] = settings.defaultChatModelKey
@@ -236,6 +238,7 @@ class SettingsRepository(
                 serializeTermuxEnvironmentVariables(settings.termuxEnvironmentVariables)
             it[AGENT_MODE_AUTHORIZATION_ENABLED] = settings.agentModeAuthorizationEnabled
             it[AGENT_MODE_AUTHORIZATION_METHOD] = settings.agentModeAuthorizationMethod.storageValue
+            it[AGENT_MODE_UI_TREE_ONLY] = settings.agentModeUiTreeOnly
             it[LANGUAGE] = settings.language.storageValue
             it[THEME_MODE] = settings.themeMode.storageValue
             it[DEFAULT_CHAT_MODEL_KEY] = settings.defaultChatModelKey
@@ -320,6 +323,8 @@ class SettingsRepository(
             booleanPreferencesKey("agent_mode_authorization_enabled")
         val AGENT_MODE_AUTHORIZATION_METHOD =
             stringPreferencesKey("agent_mode_authorization_method")
+        val AGENT_MODE_UI_TREE_ONLY =
+            booleanPreferencesKey("agent_mode_ui_tree_only")
         val LANGUAGE = stringPreferencesKey("language")
         val THEME_MODE = stringPreferencesKey("theme_mode")
         val DEFAULT_CHAT_MODEL_KEY = stringPreferencesKey("default_chat_model_key")
