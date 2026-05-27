@@ -308,7 +308,7 @@ class AgentModeController(
                 JSONObject().apply {
                     put("ok", true)
                     put("display_id", displayId)
-                    put("elements", JSONArray(raw))
+                    put("ui_tree_elements", JSONArray(raw))
                     put("stdout", "UI tree dumped for display $displayId with ${JSONArray(raw).length()} interactive elements.")
                 }.toString()
             }
@@ -704,6 +704,35 @@ class AgentModeController(
         delayMillis: Long,
     ): String {
         if (delayMillis > 0) delay(delayMillis)
+        val displayId = currentManagedDisplayId(settings)
+        val state = _displayState.value
+        val uiTreeOnly = settings.agentModeUiTreeOnly
+
+        if (uiTreeOnly) {
+            // UI-tree-only path: skip the expensive screenshot capture entirely.
+            _displayState.value = state.copy(
+                isActive = displayId != null,
+                displayId = displayId,
+                displays = currentDisplays(settings, displayId),
+                lastUpdatedMillis = System.currentTimeMillis(),
+                status = "Captured virtual display",
+            )
+            val uiTreeRaw = requireAgentModeService(settings).dumpUiTree(displayId!!)
+            val elements = JSONArray(uiTreeRaw)
+            return JSONObject().apply {
+                put("ok", true)
+                put("display_id", displayId)
+                put("width", state.width)
+                put("height", state.height)
+                state.cursorX?.let { put("cursor_x", it) }
+                state.cursorY?.let { put("cursor_y", it) }
+                put("ui_tree_elements", elements)
+                put("stdout", "Captured virtual display $displayId UI tree with " +
+                    "${elements.length()} interactive elements (UI-tree-only mode).")
+            }.toString()
+        }
+
+        // Screenshot path
         val captureId = "capture-${System.currentTimeMillis()}"
         val previewFile = File(cacheDirectory, "$captureId.$AgentModeCaptureExtension")
         captureImageFile(settings, previewFile)
@@ -719,8 +748,6 @@ class AgentModeController(
             absolutePath = workspacePath,
             bytes = bytes,
         ).getOrThrow()
-        val displayId = currentManagedDisplayId(settings)
-        val state = _displayState.value
         _displayState.value = state.copy(
             isActive = displayId != null,
             displayId = displayId,
@@ -739,17 +766,9 @@ class AgentModeController(
             put("preview_path", previewPath)
             state.cursorX?.let { put("cursor_x", it) }
             state.cursorY?.let { put("cursor_y", it) }
-            if (settings.agentModeUiTreeOnly) {
-                val uiTreeRaw = requireAgentModeService(settings).dumpUiTree(displayId!!)
-                val elements = JSONArray(uiTreeRaw)
-                put("ui_tree_elements", elements)
-                put("stdout", "Captured Agent Mode screenshot: $workspacePath  " +
-                    "(UI tree only mode — ${elements.length()} interactive elements)")
-            } else {
-                put("screenshot_mime_type", AgentModeCaptureMimeType)
-                put("screenshot_base64", Base64.encodeToString(bytes, Base64.NO_WRAP))
-                put("stdout", "Captured Agent Mode screenshot: $workspacePath")
-            }
+            put("screenshot_mime_type", AgentModeCaptureMimeType)
+            put("screenshot_base64", Base64.encodeToString(bytes, Base64.NO_WRAP))
+            put("stdout", "Captured Agent Mode screenshot: $workspacePath")
         }.toString()
     }
 

@@ -575,22 +575,21 @@ class AetherAgentModeShizukuService @Keep constructor(
     }
 
     private fun parseUiXml(xml: String, displayId: Int): JSONArray {
+        // Step 1: find all <node> elements with flexible per-attribute extraction.
+        // uiautomator dump attribute order varies across Android versions and
+        // Compose UI nodes may omit clickable, focusable, or resource-id entirely,
+        // so a single monolithic regex is too fragile.
         val result = JSONArray()
-        val nodeRegex = Regex(
-            """<node[^>]*\btext="([^"]*)"[^>]*\bcontent-desc="([^"]*)"[^>]*\bclass="([^"]*)"[^>]*\bbounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\][^"]*"[^>]*\bresource-id="([^"]*)"[^>]*\bclickable="([^"]*)"[^>]*\bfocusable="([^"]*)"[^>]*""",
-            setOf(RegexOption.DOT_MATCHES_ALL)
-        )
+        val nodeRegex = Regex("""<node\b([^>]*)/?>""")
         nodeRegex.findAll(xml).forEach { match ->
-            val text = match.groupValues[1].trim()
-            val contentDesc = match.groupValues[2].trim()
-            val className = match.groupValues[3].trim()
-            val left = match.groupValues[4].toIntOrNull() ?: return@forEach
-            val top = match.groupValues[5].toIntOrNull() ?: return@forEach
-            val right = match.groupValues[6].toIntOrNull() ?: return@forEach
-            val bottom = match.groupValues[7].toIntOrNull() ?: return@forEach
-            val resourceId = match.groupValues[8].trim()
-            val clickable = match.groupValues[9].trim().equals("true", ignoreCase = true)
-            val focusable = match.groupValues[10].trim().equals("true", ignoreCase = true)
+            val attrs = match.groupValues[1]
+            val bounds = parseBounds(extractAttr(attrs, "bounds")) ?: return@forEach
+            val text = extractAttr(attrs, "text").orEmpty()
+            val contentDesc = extractAttr(attrs, "content-desc").orEmpty()
+            val className = extractAttr(attrs, "class").orEmpty()
+            val resourceId = extractAttr(attrs, "resource-id").orEmpty()
+            val clickable = extractAttr(attrs, "clickable")?.equals("true", ignoreCase = true) ?: false
+            val focusable = extractAttr(attrs, "focusable")?.equals("true", ignoreCase = true) ?: false
             val isInteractive = clickable || focusable ||
                 className.contains("Button") || className.contains("EditText") ||
                 className.contains("CheckBox") || className.contains("Switch") ||
@@ -598,26 +597,71 @@ class AetherAgentModeShizukuService @Keep constructor(
                 text.isNotBlank() || contentDesc.isNotBlank()
             if (isInteractive) {
                 result.put(
-                    JSONObject().apply {
-                        put("text", text)
-                        put("content_desc", contentDesc)
-                        put("class", className)
-                        put("resource_id", resourceId)
-                        put("clickable", clickable)
-                        put("focusable", focusable)
-                        put("bounds", JSONObject().apply {
-                            put("left", left)
-                            put("top", top)
-                            put("right", right)
-                            put("bottom", bottom)
-                        })
-                        put("center_x", (left + right) / 2)
-                        put("center_y", (top + bottom) / 2)
-                    }
+                    buildElementJson(text, contentDesc, className, resourceId, clickable, focusable, bounds)
                 )
             }
         }
+
+        // Step 2: fallback — if no interactive elements were found (common with
+        // Compose UI where nearly every node is non-clickable, non-focusable, and
+        // has no text or content description), include every node that has at
+        // least one of text, content-desc, or resource-id.
+        if (result.length() == 0) {
+            nodeRegex.findAll(xml).forEach { match ->
+                val attrs = match.groupValues[1]
+                val text = extractAttr(attrs, "text").orEmpty()
+                val contentDesc = extractAttr(attrs, "content-desc").orEmpty()
+                val resourceId = extractAttr(attrs, "resource-id").orEmpty()
+                if (text.isNotBlank() || contentDesc.isNotBlank() || resourceId.isNotBlank()) {
+                    val bounds = parseBounds(extractAttr(attrs, "bounds")) ?: return@forEach
+                    val className = extractAttr(attrs, "class").orEmpty()
+                    val clickable = extractAttr(attrs, "clickable")?.equals("true", ignoreCase = true) ?: false
+                    val focusable = extractAttr(attrs, "focusable")?.equals("true", ignoreCase = true) ?: false
+                    result.put(
+                        buildElementJson(text, contentDesc, className, resourceId, clickable, focusable, bounds)
+                    )
+                }
+            }
+        }
+
         return result
+    }
+
+    private fun extractAttr(attrs: String, name: String): String? {
+        return Regex("""\b$name="([^"]*)"""").find(attrs)?.groupValues?.getOrNull(1)?.trim()
+    }
+
+    private fun parseBounds(raw: String?): Bounds? {
+        if (raw == null) return null
+        val m = Regex("""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""").find(raw) ?: return null
+        return Bounds(
+            left = m.groupValues[1].toInt(),
+            top = m.groupValues[2].toInt(),
+            right = m.groupValues[3].toInt(),
+            bottom = m.groupValues[4].toInt(),
+        )
+    }
+
+    private data class Bounds(val left: Int, val top: Int, val right: Int, val bottom: Int)
+
+    private fun buildElementJson(
+        text: String, contentDesc: String, className: String, resourceId: String,
+        clickable: Boolean, focusable: Boolean, bounds: Bounds,
+    ): JSONObject = JSONObject().apply {
+        put("text", text)
+        put("content_desc", contentDesc)
+        put("class", className)
+        put("resource_id", resourceId)
+        put("clickable", clickable)
+        put("focusable", focusable)
+        put("bounds", JSONObject().apply {
+            put("left", bounds.left)
+            put("top", bounds.top)
+            put("right", bounds.right)
+            put("bottom", bounds.bottom)
+        })
+        put("center_x", (bounds.left + bounds.right) / 2)
+        put("center_y", (bounds.top + bounds.bottom) / 2)
     }
 
     companion object {
