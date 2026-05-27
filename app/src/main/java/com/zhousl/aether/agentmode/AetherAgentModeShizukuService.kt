@@ -2,7 +2,7 @@ package com.zhousl.aether.agentmode
 
 import android.annotation.SuppressLint
 import android.app.ActivityOptions
-import android.app.PendingIntent
+
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
@@ -152,27 +152,14 @@ class AetherAgentModeShizukuService @Keep constructor(
             options.launchDisplayId = displayId
         }
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        intent.addFlags(Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT)
+        // FLAG_ACTIVITY_LAUNCH_ADJACENT is for split-screen multi-window,
+        // not virtual displays. Using it prevents the activity from rendering
+        // on the target virtual display.
+        // intent.addFlags(Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT)
 
-        val targetDisplay = displayManager.getDisplay(displayId)
-            ?: error("Display $displayId is not available.")
-        val displayContext = privilegedContext.createDisplayContext(targetDisplay)
-        val flags = PendingIntent.FLAG_UPDATE_CURRENT or
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
-        PendingIntent.getActivity(
-            displayContext,
-            intent.hashCode(),
-            intent,
-            flags,
-        ).send(
-            privilegedContext,
-            0,
-            null,
-            null,
-            null,
-            null,
-            options.toBundle(),
-        )
+        // Use startActivity directly with the display-configured options.
+        // This is simpler and more reliable than PendingIntent.send().
+        privilegedContext.startActivity(intent, options.toBundle())
     }
 
     override fun runInputCommand(command: String) {

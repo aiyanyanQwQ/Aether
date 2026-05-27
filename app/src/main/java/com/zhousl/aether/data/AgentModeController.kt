@@ -177,6 +177,9 @@ class AgentModeController(
     private var rootProcess: AppProcess.Terminal? = null
     @Volatile
     private var previewSurface: Surface? = null
+    // When true, Ensures that the preview surface stays detached so launched
+    // apps can render on the virtual display without Aether's composable overlay.
+    private var previewDetachedForApp: Boolean = false
 
     val displayState: StateFlow<AgentModeDisplayState> = _displayState.asStateFlow()
     val authorizationState: StateFlow<AgentModeAuthorizationState> = _authorizationState.asStateFlow()
@@ -242,6 +245,9 @@ class AgentModeController(
                 if (target.isBlank()) {
                     invalidArguments("Missing required 'target' argument.")
                 } else {
+                    // Detach preview surface so the launched app renders on the
+                    // virtual display instead of being hidden behind Aether's composable.
+                    detachPreviewForLaunch(settings)
                     launchTarget(settings, target)
                     captureAfterDelay(settings, workspaceDirectory, delayMillis = 900)
                 }
@@ -464,7 +470,9 @@ class AgentModeController(
             status = "${settings.agentModeAuthorizationMethod.displayName} virtual display ready",
             lastUpdatedMillis = System.currentTimeMillis(),
         )
-        attachCurrentPreviewSurface(settings, displayId)
+        if (!previewDetachedForApp) {
+            attachCurrentPreviewSurface(settings, displayId)
+        }
         return displayId
     }
 
@@ -499,6 +507,27 @@ class AgentModeController(
             } else {
                 state.status
             },
+            lastUpdatedMillis = System.currentTimeMillis(),
+        )
+    }
+
+    /**
+     * Detach the preview surface and set a persistent flag so that
+     * [ensureDisplay] does not reattach it on subsequent actions.
+     * This lets launched apps take over the virtual display rendering.
+     */
+    private suspend fun detachPreviewForLaunch(settings: AppSettings) {
+        val displayId = currentManagedDisplayId(settings) ?: return
+        val surface = previewSurface ?: return
+        previewSurface = null
+        previewDetachedForApp = true
+        runCatching {
+            requireAgentModeService(settings).detachPreviewSurface(displayId)
+        }
+        val state = _displayState.value
+        _displayState.value = state.copy(
+            isLivePreviewActive = false,
+            status = "App launched on virtual display $displayId",
             lastUpdatedMillis = System.currentTimeMillis(),
         )
     }
@@ -874,6 +903,7 @@ class AgentModeController(
         shizukuDisplayId = null
         displayOwnerMethod = null
         displayOwnerBinder = null
+        previewDetachedForApp = false
         _displayState.value = AgentModeDisplayState(
             isActive = false,
             displays = currentDisplaysLocal(null),
