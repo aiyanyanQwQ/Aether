@@ -18,5 +18,6 @@ interface IAetherAgentModeService {
     void captureImageToFd(int displayId, in ParcelFileDescriptor output, int maxEdge, int quality) = 12;
     String listDisplaysJson() = 13;
     String listInstalledAppsJson() = 14;
+    String dumpUiTree(int displayId) = 15;
     void destroy() = 16777114;
 }

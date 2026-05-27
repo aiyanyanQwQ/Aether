@@ -1663,6 +1663,7 @@ class AetherAgent(
                 "Agent Mode is enabled for this chat. Use agent_display to operate an isolated Android virtual display, not the user's main screen. " +
                     "Coordinates for tap and swipe are normalized from 0 to 1000, matching the Ruto/AutoGLM convention. " +
                     "Call agent_display with action=list_apps when you need the installed app name to package name mapping, then call action=start before operating apps, action=launch to open an app by package name or exact label, and action=screenshot after visible changes. " +
+                    "Call action=dump_ui_tree (aliases: ui_tree, elements) to fetch the current screen's interactive UI elements as a structured JSON tree with bounds, text, content descriptions, and center coordinates. Use this to locate buttons, text fields, and other widgets by their labels or resource IDs instead of relying on screenshot-based visual guessing. " +
                     "During multi-step Agent Mode work, interleave concise assistant text between display actions so the user can see what you are doing and why, such as the next app, screen, or decision you are checking. " +
                     "After each agent_display action that captures the display, the latest screenshot is automatically inserted into the next model request as an image, following the Ruto-GLM workflow. Use that image directly instead of calling analyze_image for Agent Mode screenshots. " +
                     "Do not use Agent Mode tools when the user only wants a normal chat answer."

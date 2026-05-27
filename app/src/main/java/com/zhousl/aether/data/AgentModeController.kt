@@ -302,6 +302,16 @@ class AgentModeController(
                 ensureDisplay(settings)
                 captureAfterDelay(settings, workspaceDirectory, delayMillis = 0)
             }
+            "dump_ui_tree", "ui_tree", "elements" -> {
+                val displayId = ensureDisplay(settings)
+                val raw = requireAgentModeService(settings).dumpUiTree(displayId)
+                JSONObject().apply {
+                    put("ok", true)
+                    put("display_id", displayId)
+                    put("elements", JSONArray(raw))
+                    put("stdout", "UI tree dumped for display $displayId with ${JSONArray(raw).length()} interactive elements.")
+                }.toString()
+            }
             "stop" -> {
                 releaseDisplay()
                 JSONObject().apply {

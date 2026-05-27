@@ -551,6 +551,75 @@ class AetherAgentModeShizukuService @Keep constructor(
         error("Unsupported key code '$rawValue'.")
     }
 
+    override fun dumpUiTree(displayId: Int): String {
+        ensureManagedDisplay(displayId)
+        val cmd = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            "uiautomator dump --display $displayId /dev/stdout"
+        } else {
+            "uiautomator dump /dev/stdout"
+        }
+        val process = ProcessBuilder("sh", "-c", cmd)
+            .redirectErrorStream(true)
+            .start()
+        val xml = process.inputStream.bufferedReader().use { it.readText() }
+        val exitCode = process.waitFor()
+        if (exitCode != 0) {
+            error(
+                xml.ifBlank {
+                    "uiautomator dump failed with exit code $exitCode on display $displayId."
+                }
+            )
+        }
+        val elements = parseUiXml(xml, displayId)
+        return elements.toString()
+    }
+
+    private fun parseUiXml(xml: String, displayId: Int): JSONArray {
+        val result = JSONArray()
+        val nodeRegex = Regex(
+            """<node[^>]*\btext="([^"]*)"[^>]*\bcontent-desc="([^"]*)"[^>]*\bclass="([^"]*)"[^>]*\bbounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\][^"]*"[^>]*\bresource-id="([^"]*)"[^>]*\bclickable="([^"]*)"[^>]*\bfocusable="([^"]*)"[^>]*""",
+            setOf(RegexOption.DOT_MATCHES_ALL)
+        )
+        nodeRegex.findAll(xml).forEach { match ->
+            val text = match.groupValues[1].trim()
+            val contentDesc = match.groupValues[2].trim()
+            val className = match.groupValues[3].trim()
+            val left = match.groupValues[4].toIntOrNull() ?: return@forEach
+            val top = match.groupValues[5].toIntOrNull() ?: return@forEach
+            val right = match.groupValues[6].toIntOrNull() ?: return@forEach
+            val bottom = match.groupValues[7].toIntOrNull() ?: return@forEach
+            val resourceId = match.groupValues[8].trim()
+            val clickable = match.groupValues[9].trim().equals("true", ignoreCase = true)
+            val focusable = match.groupValues[10].trim().equals("true", ignoreCase = true)
+            val isInteractive = clickable || focusable ||
+                className.contains("Button") || className.contains("EditText") ||
+                className.contains("CheckBox") || className.contains("Switch") ||
+                className.contains("ImageView") || className.contains("ImageButton") ||
+                text.isNotBlank() || contentDesc.isNotBlank()
+            if (isInteractive) {
+                result.put(
+                    JSONObject().apply {
+                        put("text", text)
+                        put("content_desc", contentDesc)
+                        put("class", className)
+                        put("resource_id", resourceId)
+                        put("clickable", clickable)
+                        put("focusable", focusable)
+                        put("bounds", JSONObject().apply {
+                            put("left", left)
+                            put("top", top)
+                            put("right", right)
+                            put("bottom", bottom)
+                        })
+                        put("center_x", (left + right) / 2)
+                        put("center_y", (top + bottom) / 2)
+                    }
+                )
+            }
+        }
+        return result
+    }
+
     companion object {
         private fun resolveLegacyUserServiceContext(): Context {
             val activityThreadClass = Class.forName("android.app.ActivityThread")
