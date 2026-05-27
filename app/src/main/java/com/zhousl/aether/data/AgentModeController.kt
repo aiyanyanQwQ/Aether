@@ -740,7 +740,7 @@ class AgentModeController(
             state.cursorX?.let { put("cursor_x", it) }
             state.cursorY?.let { put("cursor_y", it) }
             if (settings.agentModeUiTreeOnly) {
-                val uiTreeRaw = requireAgentModeService(settings).dumpUiTree(displayId)
+                val uiTreeRaw = requireAgentModeService(settings).dumpUiTree(displayId!!)
                 val elements = JSONArray(uiTreeRaw)
                 put("ui_tree_elements", elements)
                 put("stdout", "Captured Agent Mode screenshot: $workspacePath  " +
