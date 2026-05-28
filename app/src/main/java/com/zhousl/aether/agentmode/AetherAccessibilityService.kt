@@ -15,7 +15,7 @@ import org.json.JSONObject
  * Android's uiautomator (shell command) runs under the calling app's UID and
  * can only traverse the view hierarchy of its own process.  On a virtual display
  * where the target app is a separate process, uiautomator returns nothing
- * useful.  This service uses [windowsForDisplay] (API 30+) to find the target
+ * useful.  This service uses [windows] plus displayId filtering (API 30+) to find the target
  * application window and dump its accessibility tree directly.
  */
 class AetherAccessibilityService : AccessibilityService() {
@@ -53,15 +53,17 @@ class AetherAccessibilityService : AccessibilityService() {
         aetherPackage: String,
     ): JSONArray {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            Log.w(TAG, "windowsForDisplay requires API 30+")
+            Log.w(TAG, "displayId-filtered windows require API 30+")
             return JSONArray()
         }
 
         val result = JSONArray()
-        val windows: List<AccessibilityWindowInfo> = windowsForDisplay(displayId)
-        Log.i(TAG, "windowsForDisplay($displayId) returned ${windows.size} window(s)")
+        // windows property (API 21+) returns all visible windows;
+        // filter by displayId (AccessibilityWindowInfo.displayId, API 30+)
+        val displayWindows = windows.filter { it.displayId == displayId }
+        Log.i(TAG, "windows on display $displayId: ${displayWindows.size} of ${windows.size} total")
 
-        for (window in windows) {
+        for (window in displayWindows) {
             try {
                 val root = window.root ?: continue
                 val windowPackage = root.packageName?.toString().orEmpty()
