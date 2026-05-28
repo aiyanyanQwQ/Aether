@@ -575,6 +575,7 @@ class AetherAgentModeShizukuService @Keep constructor(
             val contentDesc = extractAttr(attrs, "content-desc").orEmpty()
             val className = extractAttr(attrs, "class").orEmpty()
             val resourceId = extractAttr(attrs, "resource-id").orEmpty()
+            val packageName = extractAttr(attrs, "package").orEmpty()
             val clickable = extractAttr(attrs, "clickable")?.equals("true", ignoreCase = true) ?: false
             val focusable = extractAttr(attrs, "focusable")?.equals("true", ignoreCase = true) ?: false
             val isInteractive = clickable || focusable ||
@@ -584,7 +585,7 @@ class AetherAgentModeShizukuService @Keep constructor(
                 text.isNotBlank() || contentDesc.isNotBlank()
             if (isInteractive) {
                 result.put(
-                    buildElementJson(text, contentDesc, className, resourceId, clickable, focusable, bounds)
+                    buildElementJson(text, contentDesc, className, resourceId, packageName, clickable, focusable, bounds)
                 )
             }
         }
@@ -602,10 +603,11 @@ class AetherAgentModeShizukuService @Keep constructor(
                 if (text.isNotBlank() || contentDesc.isNotBlank() || resourceId.isNotBlank()) {
                     val bounds = parseBounds(extractAttr(attrs, "bounds")) ?: return@forEach
                     val className = extractAttr(attrs, "class").orEmpty()
+                    val packageName = extractAttr(attrs, "package").orEmpty()
                     val clickable = extractAttr(attrs, "clickable")?.equals("true", ignoreCase = true) ?: false
                     val focusable = extractAttr(attrs, "focusable")?.equals("true", ignoreCase = true) ?: false
                     result.put(
-                        buildElementJson(text, contentDesc, className, resourceId, clickable, focusable, bounds)
+                        buildElementJson(text, contentDesc, className, resourceId, packageName, clickable, focusable, bounds)
                     )
                 }
             }
@@ -633,12 +635,14 @@ class AetherAgentModeShizukuService @Keep constructor(
 
     private fun buildElementJson(
         text: String, contentDesc: String, className: String, resourceId: String,
+        packageName: String,
         clickable: Boolean, focusable: Boolean, bounds: Bounds,
     ): JSONObject = JSONObject().apply {
         put("text", text)
         put("content_desc", contentDesc)
         put("class", className)
         put("resource_id", resourceId)
+        put("package_name", packageName)
         put("clickable", clickable)
         put("focusable", focusable)
         put("bounds", JSONObject().apply {

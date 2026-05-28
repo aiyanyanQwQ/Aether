@@ -577,10 +577,17 @@ class AetherAgent(
     ): String {
         if (toolName != "agent_display") return output
         val parsed = runCatching { JSONObject(output) }.getOrNull() ?: return output
-        if (!parsed.has("screenshot_base64") && !parsed.has("ui_tree_elements")) return output
+        val injectedScreenshot = parsed.has("screenshot_base64")
+        val injectedUiTree = parsed.has("ui_tree_elements")
+        if (!injectedScreenshot && !injectedUiTree) return output
         parsed.remove("screenshot_base64")
         parsed.remove("ui_tree_elements")
-        parsed.put("screenshot_injected_into_next_model_request", true)
+        if (injectedScreenshot) {
+            parsed.put("screenshot_injected_into_next_model_request", true)
+        }
+        if (injectedUiTree) {
+            parsed.put("ui_tree_injected_into_next_model_request", true)
+        }
         return parsed.toString()
     }
 

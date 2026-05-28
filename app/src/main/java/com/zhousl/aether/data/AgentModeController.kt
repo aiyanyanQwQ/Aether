@@ -180,6 +180,7 @@ class AgentModeController(
     // When true, Ensures that the preview surface stays detached so launched
     // apps can render on the virtual display without Aether's composable overlay.
     private var previewDetachedForApp: Boolean = false
+    private var lastLaunchedPackageForDisplay: String? = null
 
     val displayState: StateFlow<AgentModeDisplayState> = _displayState.asStateFlow()
     val authorizationState: StateFlow<AgentModeAuthorizationState> = _authorizationState.asStateFlow()
@@ -314,6 +315,7 @@ class AgentModeController(
                 JSONObject().apply {
                     put("ok", true)
                     put("display_id", displayId)
+                    put("target_package", lastLaunchedPackageForDisplay)
                     put("ui_tree_elements", elements)
                     put("stdout", "UI tree dumped for display $displayId with ${elements.length()} interactive elements.")
                 }.toString()
@@ -574,6 +576,7 @@ class AgentModeController(
         val launchPackage = resolveLaunchPackage(settings, target)
             ?: error("No launchable app matched '$target'. Try a package name such as com.android.chrome, or a shorter app label.")
         requireAgentModeService(settings).launchPackage(launchPackage, displayId)
+        lastLaunchedPackageForDisplay = launchPackage
     }
 
     private suspend fun dumpUiTreeWithPreviewHidden(
@@ -587,11 +590,39 @@ class AgentModeController(
             delay(150)
         }
         return try {
-            JSONArray(service.dumpUiTree(displayId))
+            val rawElements = JSONArray(service.dumpUiTree(displayId))
+            filterUiTreeElements(rawElements, lastLaunchedPackageForDisplay)
         } finally {
             if (shouldRestorePreview) {
                 runCatching { attachCurrentPreviewSurface(settings, displayId) }
             }
+        }
+    }
+
+    private fun filterUiTreeElements(
+        elements: JSONArray,
+        targetPackage: String?,
+    ): JSONArray {
+        val appPackage = context.packageName.lowercase()
+        val normalizedTarget = targetPackage?.trim()?.lowercase().orEmpty()
+        val matchingTarget = JSONArray()
+        val nonAether = JSONArray()
+        val original = JSONArray()
+        for (index in 0 until elements.length()) {
+            val element = elements.optJSONObject(index) ?: continue
+            original.put(element)
+            val elementPackage = element.optString("package_name").trim().lowercase()
+            if (normalizedTarget.isNotBlank() && elementPackage == normalizedTarget) {
+                matchingTarget.put(element)
+            }
+            if (!elementPackage.startsWith(appPackage)) {
+                nonAether.put(element)
+            }
+        }
+        return when {
+            matchingTarget.length() > 0 -> matchingTarget
+            nonAether.length() > 0 -> nonAether
+            else -> original
         }
     }
 
@@ -769,6 +800,7 @@ class AgentModeController(
             return JSONObject().apply {
                 put("ok", true)
                 put("display_id", displayId)
+                put("target_package", lastLaunchedPackageForDisplay)
                 put("width", state.width)
                 put("height", state.height)
                 state.cursorX?.let { put("cursor_x", it) }
@@ -922,6 +954,7 @@ class AgentModeController(
         displayOwnerMethod = null
         displayOwnerBinder = null
         previewDetachedForApp = false
+        lastLaunchedPackageForDisplay = null
         _displayState.value = AgentModeDisplayState(
             isActive = false,
             displays = currentDisplaysLocal(null),
