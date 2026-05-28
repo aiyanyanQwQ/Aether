@@ -551,7 +551,7 @@ class AetherAgentModeShizukuService @Keep constructor(
     }
 
     override fun dumpUiTree(displayId: Int): String {
-        ensureManagedDisplay(displayId)
+        if (displayId != 0) ensureManagedDisplay(displayId)
         val cmd = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             "uiautomator dump --display $displayId /dev/stdout"
         } else {
