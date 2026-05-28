@@ -595,15 +595,33 @@ class AgentModeController(
             delay(150)
         }
         return try {
-            // First attempt: use the AccessibilityService for the target app's
-            // real window hierarchy (uiautomator can only see Aether's own views
-            // on virtual displays).
-            val rawElements = dumpUiTreeViaAccessibility(displayId)
+            // Priority 1: UiAutomation.getWindowsOnAllDisplays() via reflection.
+            // This is the ONLY reliable way to get UI trees from virtual-display
+            // apps because uiautomator dump and AccessibilityService both miss them.
+            val uiAutomationResult = runCatching {
+                JSONArray(service.dumpUiTreeViaUiAutomation(displayId))
+            }.getOrNull()
+            if (uiAutomationResult != null && uiAutomationResult.length() > 0) {
+                val hasOnlyError = uiAutomationResult.length() == 1 &&
+                    uiAutomationResult.optJSONObject(0)?.has("_error") == true
+                if (!hasOnlyError) {
+                    return@try filterUiTreeElements(uiAutomationResult, lastLaunchedPackageForDisplay)
+                }
+            }
+
+            // Priority 2: AccessibilityService (may work on some devices/virtual-display types)
+            val a11yResult = dumpUiTreeViaAccessibility(displayId)
                 .takeIf { it.length() > 0 }
-                ?.let { JSONArray(it) }
-                // Fallback: uiautomator dump (may only contain Aether nodes).
-                ?: JSONArray(service.dumpUiTree(displayId))
-            filterUiTreeElements(rawElements, lastLaunchedPackageForDisplay)
+            if (a11yResult != null) {
+                return@try filterUiTreeElements(a11yResult, lastLaunchedPackageForDisplay)
+            }
+
+            // Priority 3 (last resort): uiautomator dump (only sees Aether nodes on
+            // virtual displays, but kept for diagnostic value)
+            filterUiTreeElements(
+                JSONArray(service.dumpUiTree(displayId)),
+                lastLaunchedPackageForDisplay,
+            )
         } finally {
             if (shouldRestorePreview) {
                 runCatching { attachCurrentPreviewSurface(settings, displayId) }

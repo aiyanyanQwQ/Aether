@@ -20,5 +20,6 @@ interface IAetherAgentModeService {
     String listInstalledAppsJson() = 14;
     String dumpUiTree(int displayId) = 15;
     String listWindowsDiagnosticsJson() = 16;
+    String dumpUiTreeViaUiAutomation(int displayId) = 17;
     void destroy() = 16777114;
 }

@@ -14,6 +14,7 @@ import android.hardware.display.VirtualDisplay
 import android.media.Image
 import android.media.ImageReader
 import android.os.Build
+import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import android.os.Process
 import android.os.SystemClock
@@ -152,14 +153,25 @@ class AetherAgentModeShizukuService @Keep constructor(
             options.launchDisplayId = displayId
         }
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        // FLAG_ACTIVITY_LAUNCH_ADJACENT is for split-screen multi-window,
-        // not virtual displays. Using it prevents the activity from rendering
-        // on the target virtual display.
-        // intent.addFlags(Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT)
 
-        // Use startActivity directly with the display-configured options.
-        // This is simpler and more reliable than PendingIntent.send().
-        privilegedContext.startActivity(intent, options.toBundle())
+        try {
+            privilegedContext.startActivity(intent, options.toBundle())
+        } catch (e: Exception) {
+            // On some ColorOS / heavily-modified Android versions,
+            // startActivity with launchDisplayId is blocked. Fall back
+            // to root shell `am start --display`.
+            val activityComponent = intent.component?.flattenToString()
+                ?: error("Cannot resolve launch intent component for $packageName.")
+            val cmd = "am start --display $displayId -n $activityComponent"
+            val process = ProcessBuilder("sh", "-c", cmd)
+                .redirectErrorStream(true)
+                .start()
+            val output = process.inputStream.bufferedReader().use { it.readText() }
+            val exitCode = process.waitFor()
+            if (exitCode != 0) {
+                error("Launch failed for $packageName on display $displayId: $output")
+            }
+        }
     }
 
     override fun runInputCommand(command: String) {
@@ -559,6 +571,159 @@ class AetherAgentModeShizukuService @Keep constructor(
         }
         val elements = parseUiXml(xml, displayId)
         return elements.toString()
+    }
+
+    /**
+     * Use [android.app.UiAutomation.getWindowsOnAllDisplays] (API 30+) via
+     * reflection to find windows on the given [displayId] and dump their
+     * accessibility trees.
+     *
+     * This is the ONLY reliable way to get UI-element trees from apps
+     * running on virtual displays, because:
+     * - uiautomator dump --display sees only the host app's hierarchy
+     * - AccessibilityService windows property also misses virtual-display apps
+     * - UiAutomation.getWindowsOnAllDisplays() returns windows from ALL
+     *   displays, including virtual ones, each with a root AccessibilityNodeInfo
+     *
+     * Requires the UiAutomation system service to be available. Returns a
+     * JSONArray string (possibly empty) or throws on failure.
+     */
+    override fun dumpUiTreeViaUiAutomation(displayId: Int): String {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            return JSONArray().toString() // API < 30: getWindowsOnAllDisplays not available
+        }
+
+        val elements = JSONArray()
+        var uiAutomation: Any? = null
+        try {
+            // 1. Get IUiAutomationConnection from ServiceManager
+            val smClass = Class.forName("android.os.ServiceManager")
+            val getService = smClass.getDeclaredMethod("getService", String::class.java)
+            val binder = getService.invoke(null, "uiautomation") as? IBinder
+                ?: return JSONArray().apply {
+                    put(JSONObject().apply {
+                        put("_error", "uiautomation service not found")
+                    })
+                }.toString()
+
+            val connClass = Class.forName("android.app.IUiAutomationConnection")
+            val asInterface = connClass.getDeclaredMethod("asInterface", IBinder::class.java)
+            val connection = asInterface.invoke(null, binder)
+
+            // 2. Create UiAutomation instance
+            val uiaClass = Class.forName("android.app.UiAutomation")
+            val ctor = uiaClass.getDeclaredConstructor(
+                android.os.Looper::class.java, connClass
+            )
+            ctor.isAccessible = true
+            uiAutomation = ctor.newInstance(android.os.Looper.getMainLooper(), connection)
+
+            // 3. Connect
+            val connectMethod = uiaClass.getDeclaredMethod("connect")
+            connectMethod.invoke(uiAutomation)
+
+            // 4. getWindowsOnAllDisplays() → SparseArray<List<AccessibilityWindowInfo>>
+            val getWindowsMethod = uiaClass.getDeclaredMethod("getWindowsOnAllDisplays")
+            @Suppress("UNCHECKED_CAST")
+            val sparseArray = getWindowsMethod.invoke(uiAutomation) as? android.util.SparseArray<*>
+                ?: return elements.toString()
+
+            // 5. Find windows for the target display
+            val targetWindows = sparseArray[displayId] as? List<*>
+            if (targetWindows.isNullOrEmpty()) {
+                return elements.toString()
+            }
+
+            // 6. Dump tree for each window
+            for (window in targetWindows) {
+                val windowClass = window!!.javaClass
+                val getRoot = windowClass.getDeclaredMethod("getRoot")
+                val root = getRoot.invoke(window) as? android.view.accessibility.AccessibilityNodeInfo
+                if (root != null) {
+                    try {
+                        dumpAccessibilityNode(root, elements, depth = 0)
+                    } finally {
+                        root.recycle()
+                    }
+                }
+            }
+
+        } catch (e: Exception) {
+            return JSONArray().apply {
+                put(JSONObject().apply {
+                    put("_error", "UiAutomation dump failed: ${e.message}")
+                    put("_exception", e.javaClass.simpleName)
+                })
+            }.toString()
+        } finally {
+            if (uiAutomation != null) {
+                try {
+                    val uiaClass = uiAutomation.javaClass
+                    val disconnectMethod = uiaClass.getDeclaredMethod("disconnect")
+                    disconnectMethod.invoke(uiAutomation)
+                } catch (_: Exception) { /* best-effort cleanup */ }
+            }
+        }
+        return elements.toString()
+    }
+
+    /**
+     * Recursively dump an [AccessibilityNodeInfo] tree into [target].
+     * Only includes nodes that have text, content-description, resource-id,
+     * or are interactive (clickable/focusable).
+     */
+    private fun dumpAccessibilityNode(
+        node: android.view.accessibility.AccessibilityNodeInfo,
+        target: JSONArray,
+        depth: Int,
+    ) {
+        if (depth > 64) return // safety limit
+
+        val text = node.text?.toString().orEmpty()
+        val contentDesc = node.contentDescription?.toString().orEmpty()
+        val resourceId = node.viewIdResourceName.orEmpty()
+        val className = node.className?.toString().orEmpty()
+        val packageName = node.packageName?.toString().orEmpty()
+        val isClickable = node.isClickable
+        val isFocusable = node.isFocusable
+
+        val isInteractive = isClickable || isFocusable ||
+            className.contains("Button") || className.contains("EditText") ||
+            className.contains("CheckBox") || className.contains("Switch") ||
+            className.contains("ImageView") || className.contains("ImageButton") ||
+            text.isNotBlank() || contentDesc.isNotBlank()
+
+        if (isInteractive) {
+            val rect = android.graphics.Rect()
+            node.getBoundsInScreen(rect)
+            target.put(JSONObject().apply {
+                put("text", text)
+                put("content_desc", contentDesc)
+                put("class", className)
+                put("resource_id", resourceId)
+                put("package_name", packageName)
+                put("clickable", isClickable)
+                put("focusable", isFocusable)
+                put("bounds", JSONObject().apply {
+                    put("left", rect.left)
+                    put("top", rect.top)
+                    put("right", rect.right)
+                    put("bottom", rect.bottom)
+                })
+                put("center_x", (rect.left + rect.right) / 2)
+                put("center_y", (rect.top + rect.bottom) / 2)
+            })
+        }
+
+        // Recurse into children
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            try {
+                dumpAccessibilityNode(child, target, depth + 1)
+            } finally {
+                child.recycle()
+            }
+        }
     }
 
     /**
