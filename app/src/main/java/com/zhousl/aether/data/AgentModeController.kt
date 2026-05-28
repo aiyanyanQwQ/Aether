@@ -948,7 +948,7 @@ class AgentModeController(
     ): String {
         if (delayMillis > 0) delay(delayMillis)
         val freeform = settings.agentModeFreeform
-        val displayId = if (freeform) 0 else currentManagedDisplayId(settings)
+        val displayId: Int = if (freeform) 0 else (currentManagedDisplayId(settings) ?: 0)
         val state = _displayState.value
         val uiTreeOnly = settings.agentModeUiTreeOnly
 
@@ -1040,8 +1040,11 @@ class AgentModeController(
     private suspend fun captureImageFile(
         settings: AppSettings,
         outputFile: File,
-        displayId: Int = currentManagedDisplayId(settings) ?: ensureDisplay(settings),
+        rawDisplayId: Int? = null,
     ) {
+        val displayId = rawDisplayId
+            ?: currentManagedDisplayId(settings)
+            ?: ensureDisplay(settings)
         captureMutex.withLock {
             outputFile.parentFile?.mkdirs()
             runCatching { outputFile.delete() }
