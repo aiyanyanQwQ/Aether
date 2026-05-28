@@ -244,8 +244,12 @@ class AgentModeController(
         runCatching {
             when (action) {
             "start" -> {
-                ensureDisplay(settings)
-                captureAfterDelay(settings, workspaceDirectory, delayMillis = 350)
+                if (settings.agentModeFreeform) {
+                    statusResult(settings)
+                } else {
+                    ensureDisplay(settings)
+                    captureAfterDelay(settings, workspaceDirectory, delayMillis = 350)
+                }
             }
             "status" -> statusResult(settings)
             "list_apps", "apps", "installed_apps" -> listInstalledAppsResult(settings, arguments)
