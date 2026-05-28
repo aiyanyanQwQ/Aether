@@ -1054,7 +1054,7 @@ class AgentModeController(
             runCatching { outputFile.delete() }
             if (displayId == 0 && settings.agentModeFreeform) {
                 // Use screencap via root for the physical display (freeform mode).
-                val tmpPath = "/data/local/tmp/aether_capture_$$.png"
+                val tmpPath = "/data/local/tmp/aether_freeform_capture.png"
                 requireAgentModeService(settings).runInputCommand(
                     "screencap -p $tmpPath && chmod 644 $tmpPath"
                 )
