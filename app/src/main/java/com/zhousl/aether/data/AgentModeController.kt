@@ -594,7 +594,7 @@ class AgentModeController(
             runCatching { service.detachPreviewSurface(displayId) }
             delay(150)
         }
-        return try {
+        val rawElements = try {
             // Priority 1: UiAutomation.getWindowsOnAllDisplays() via reflection.
             // This is the ONLY reliable way to get UI trees from virtual-display
             // apps because uiautomator dump and AccessibilityService both miss them.
@@ -605,23 +605,32 @@ class AgentModeController(
                 val hasOnlyError = uiAutomationResult.length() == 1 &&
                     uiAutomationResult.optJSONObject(0)?.has("_error") == true
                 if (!hasOnlyError) {
-                    return@try filterUiTreeElements(uiAutomationResult, lastLaunchedPackageForDisplay)
+                    uiAutomationResult
+                } else {
+                    null
                 }
+            } else {
+                null
             }
+        } catch (_: Exception) {
+            null
+        }
 
-            // Priority 2: AccessibilityService (may work on some devices/virtual-display types)
+        val finalElements = if (rawElements != null) {
+            rawElements
+        } else {
+            // Priority 2: AccessibilityService
             val a11yResult = dumpUiTreeViaAccessibility(displayId)
-                .takeIf { it.length() > 0 }
-            if (a11yResult != null) {
-                return@try filterUiTreeElements(a11yResult, lastLaunchedPackageForDisplay)
+            if (a11yResult.length() > 0) {
+                a11yResult
+            } else {
+                // Priority 3 (last resort): uiautomator dump
+                JSONArray(service.dumpUiTree(displayId))
             }
+        }
 
-            // Priority 3 (last resort): uiautomator dump (only sees Aether nodes on
-            // virtual displays, but kept for diagnostic value)
-            filterUiTreeElements(
-                JSONArray(service.dumpUiTree(displayId)),
-                lastLaunchedPackageForDisplay,
-            )
+        return try {
+            filterUiTreeElements(finalElements, lastLaunchedPackageForDisplay)
         } finally {
             if (shouldRestorePreview) {
                 runCatching { attachCurrentPreviewSurface(settings, displayId) }
