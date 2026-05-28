@@ -310,12 +310,12 @@ class AgentModeController(
             }
             "dump_ui_tree", "ui_tree", "elements" -> {
                 val displayId = ensureDisplay(settings)
-                val raw = requireAgentModeService(settings).dumpUiTree(displayId)
+                val elements = dumpUiTreeWithPreviewHidden(settings, displayId)
                 JSONObject().apply {
                     put("ok", true)
                     put("display_id", displayId)
-                    put("ui_tree_elements", JSONArray(raw))
-                    put("stdout", "UI tree dumped for display $displayId with ${JSONArray(raw).length()} interactive elements.")
+                    put("ui_tree_elements", elements)
+                    put("stdout", "UI tree dumped for display $displayId with ${elements.length()} interactive elements.")
                 }.toString()
             }
             "stop" -> {
@@ -576,6 +576,25 @@ class AgentModeController(
         requireAgentModeService(settings).launchPackage(launchPackage, displayId)
     }
 
+    private suspend fun dumpUiTreeWithPreviewHidden(
+        settings: AppSettings,
+        displayId: Int,
+    ): JSONArray {
+        val service = requireAgentModeService(settings)
+        val shouldRestorePreview = !previewDetachedForApp && previewSurface?.isValid == true
+        if (shouldRestorePreview) {
+            runCatching { service.detachPreviewSurface(displayId) }
+            delay(150)
+        }
+        return try {
+            JSONArray(service.dumpUiTree(displayId))
+        } finally {
+            if (shouldRestorePreview) {
+                runCatching { attachCurrentPreviewSurface(settings, displayId) }
+            }
+        }
+    }
+
     private suspend fun resolveLaunchPackage(
         settings: AppSettings,
         target: String,
@@ -746,8 +765,7 @@ class AgentModeController(
                 lastUpdatedMillis = System.currentTimeMillis(),
                 status = "Captured virtual display",
             )
-            val uiTreeRaw = requireAgentModeService(settings).dumpUiTree(displayId!!)
-            val elements = JSONArray(uiTreeRaw)
+            val elements = dumpUiTreeWithPreviewHidden(settings, displayId!!)
             return JSONObject().apply {
                 put("ok", true)
                 put("display_id", displayId)
