@@ -121,6 +121,7 @@ class AgentModeController(
     private val controllerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val captureMutex = Mutex()
     private val shizukuServiceMutex = Mutex()
+    @Volatile var currentSettings: AppSettings = AppSettings()
     private val _displayState = MutableStateFlow(AgentModeDisplayState())
     private val _authorizationState = MutableStateFlow(AgentModeAuthorizationState())
     private val shizukuPermissionResultListener =
@@ -244,7 +245,7 @@ class AgentModeController(
         runCatching {
             when (action) {
             "start" -> {
-                if (settings.agentModeFreeform) {
+                if (currentSettings.agentModeFreeform) {
                     statusResult(settings)
                 } else {
                     ensureDisplay(settings)
@@ -257,7 +258,7 @@ class AgentModeController(
                 val target = arguments.optString("target").trim()
                 if (target.isBlank()) {
                     invalidArguments("Missing required 'target' argument.")
-                } else if (settings.agentModeFreeform) {
+                } else if (currentSettings.agentModeFreeform) {
                     launchFreeform(settings, target)
                     captureAfterDelay(settings, workspaceDirectory, delayMillis = 900)
                 } else {
@@ -272,7 +273,7 @@ class AgentModeController(
                 val y = normalizedY(arguments.optDouble("y", Double.NaN))
                 if (x == null || y == null) {
                     invalidArguments("Both 'x' and 'y' are required, using 0..1000 screen coordinates.")
-                } else if (settings.agentModeFreeform) {
+                } else if (currentSettings.agentModeFreeform) {
                     freeformInput(settings, "tap $x $y")
                     updateCursorPosition(x, y, animationDurationMillis = 180)
                     captureAfterDelay(settings, workspaceDirectory, delayMillis = 350)
@@ -292,7 +293,7 @@ class AgentModeController(
                     .coerceIn(50, 10_000)
                 if (x1 == null || y1 == null || x2 == null || y2 == null) {
                     invalidArguments("x1, y1, x2, and y2 are required, using 0..1000 screen coordinates.")
-                } else if (settings.agentModeFreeform) {
+                } else if (currentSettings.agentModeFreeform) {
                     updateCursorPosition(x1, y1, animationDurationMillis = 80)
                     controllerScope.launch {
                         delay(40)
@@ -315,7 +316,7 @@ class AgentModeController(
                 val keyCode = arguments.optString("key").trim()
                 if (keyCode.isBlank()) {
                     invalidArguments("Missing required 'key' argument.")
-                } else if (settings.agentModeFreeform) {
+                } else if (currentSettings.agentModeFreeform) {
                     freeformInput(settings, "keyevent $keyCode")
                     captureAfterDelay(settings, workspaceDirectory, delayMillis = 300)
                 } else {
@@ -328,7 +329,7 @@ class AgentModeController(
                 val text = arguments.optString("text")
                 if (text.isBlank()) {
                     invalidArguments("Missing required 'text' argument.")
-                } else if (settings.agentModeFreeform) {
+                } else if (currentSettings.agentModeFreeform) {
                     // Use a temp approach: replace %s in a base64 command
                     val b64 = android.util.Base64.encodeToString(
                         text.toByteArray(), android.util.Base64.NO_WRAP
@@ -342,13 +343,13 @@ class AgentModeController(
                 }
             }
             "screenshot" -> {
-                if (!settings.agentModeFreeform) {
+                if (!currentSettings.agentModeFreeform) {
                     ensureDisplay(settings)
                 }
                 captureAfterDelay(settings, workspaceDirectory, delayMillis = 0)
             }
             "dump_ui_tree", "ui_tree", "elements" -> {
-                if (settings.agentModeFreeform) {
+                if (currentSettings.agentModeFreeform) {
                     freeformDumpUiTree(settings)
                 } else {
                     val displayId = ensureDisplay(settings)
@@ -412,6 +413,7 @@ class AgentModeController(
     }
 
     suspend fun refreshAuthorization(settings: AppSettings) {
+        currentSettings = settings
         if (
             shizukuDisplayId != null &&
             displayOwnerMethod != null &&
@@ -951,7 +953,7 @@ class AgentModeController(
         delayMillis: Long,
     ): String {
         if (delayMillis > 0) delay(delayMillis)
-        val freeform = settings.agentModeFreeform
+        val freeform = currentSettings.agentModeFreeform
         val displayId: Int = if (freeform) 0 else (currentManagedDisplayId(settings) ?: 0)
         val state = _displayState.value
         val uiTreeOnly = settings.agentModeUiTreeOnly
@@ -1052,7 +1054,7 @@ class AgentModeController(
         captureMutex.withLock {
             outputFile.parentFile?.mkdirs()
             runCatching { outputFile.delete() }
-            if (displayId == 0 && settings.agentModeFreeform) {
+            if (displayId == 0 && currentSettings.agentModeFreeform) {
                 // Use screencap via root for the physical display (freeform mode).
                 val tmpPath = "/data/local/tmp/aether_freeform_capture.png"
                 requireAgentModeService(settings).runInputCommand(
