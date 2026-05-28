@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Aether</string>
+    <string name="accessibility_service_description">Aether uses this accessibility service to read the UI element tree of apps launched on Agent Mode virtual displays. No data is collected or transmitted.</string>
 </resources>
-

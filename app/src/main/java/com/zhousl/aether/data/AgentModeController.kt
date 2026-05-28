@@ -317,6 +317,11 @@ class AgentModeController(
                     put("display_id", displayId)
                     put("target_package", lastLaunchedPackageForDisplay)
                     put("ui_tree_elements", elements)
+                    put("accessibility_windows", accessibilityWindowDiagnostics())
+                    put("dumpsys_window_diagnostics", runCatching {
+                        requireAgentModeService(settings).listWindowsDiagnosticsJson()
+                            .let { JSONObject(it) }
+                    }.getOrElse { JSONObject().apply { put("error", it.message) } })
                     put("stdout", "UI tree dumped for display $displayId with ${elements.length()} interactive elements.")
                 }.toString()
             }
@@ -590,12 +595,47 @@ class AgentModeController(
             delay(150)
         }
         return try {
-            val rawElements = JSONArray(service.dumpUiTree(displayId))
+            // First attempt: use the AccessibilityService for the target app's
+            // real window hierarchy (uiautomator can only see Aether's own views
+            // on virtual displays).
+            val rawElements = dumpUiTreeViaAccessibility(displayId)
+                .takeIf { it.length() > 0 }
+                ?.let { JSONArray(it) }
+                // Fallback: uiautomator dump (may only contain Aether nodes).
+                ?: JSONArray(service.dumpUiTree(displayId))
             filterUiTreeElements(rawElements, lastLaunchedPackageForDisplay)
         } finally {
             if (shouldRestorePreview) {
                 runCatching { attachCurrentPreviewSurface(settings, displayId) }
             }
+        }
+    }
+
+    /**
+     * Use the [AetherAccessibilityService] to get the target app's UI tree
+     * on the given virtual display.
+     *
+     * Returns a JSONArray (possibly empty if the service is unavailable or
+     * no matching windows were found).
+     */
+    private fun dumpUiTreeViaAccessibility(displayId: Int): JSONArray {
+        val a11y = com.zhousl.aether.agentmode.AetherAccessibilityService.instance
+            ?: return JSONArray()
+        return a11y.dumpDisplayTree(displayId, context.packageName)
+    }
+
+    /**
+     * Return diagnostic info about all windows visible to the accessibility
+     * service, for inclusion in [dump_ui_tree] tool output.
+     */
+    private fun accessibilityWindowDiagnostics(): JSONObject {
+        val a11y = com.zhousl.aether.agentmode.AetherAccessibilityService.instance
+            ?: return JSONObject().apply {
+                put("available", false)
+                put("message", "AetherAccessibilityService is not running. Enable it in Settings → Accessibility → Aether.")
+            }
+        return a11y.listAllWindowsDiagnostics().also {
+            it.put("available", true)
         }
     }
 
@@ -806,6 +846,7 @@ class AgentModeController(
                 state.cursorX?.let { put("cursor_x", it) }
                 state.cursorY?.let { put("cursor_y", it) }
                 put("ui_tree_elements", elements)
+                put("accessibility_windows", accessibilityWindowDiagnostics())
                 put("stdout", "Captured virtual display $displayId UI tree with " +
                     "${elements.length()} interactive elements (UI-tree-only mode).")
             }.toString()

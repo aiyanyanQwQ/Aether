@@ -561,6 +561,66 @@ class AetherAgentModeShizukuService @Keep constructor(
         return elements.toString()
     }
 
+    /**
+     * Run `dumpsys window windows` (requires root/shell) to collect
+     * diagnostic info about what windows exist on each display.
+     * This is useful when accessibility service is not available and
+     * uiautomator is the fallback.
+     */
+    override fun listWindowsDiagnosticsJson(): String {
+        return try {
+            val process = ProcessBuilder("sh", "-c", "dumpsys window windows 2>/dev/null")
+                .redirectErrorStream(true)
+                .start()
+            val dump = process.inputStream.bufferedReader().use { it.readText() }
+            process.waitFor()
+            parseWindowDump(dump)
+        } catch (e: Exception) {
+            JSONObject().apply {
+                put("error", e.message ?: "unknown")
+            }.toString()
+        }
+    }
+
+    private fun parseWindowDump(dump: String): String {
+        val result = JSONObject()
+        val windows = JSONArray()
+        // Regexes for parsing "Window #" sections from dumpsys output
+        val displayLine = Regex("""displayId=(\d+)""")
+        val packageLine = Regex("""package=(\S+)""")
+        val mCurrentFocus = Regex("""mCurrentFocus=Window\{[^}]+\}\s+(\S+)""")
+        val mFocusedApp = Regex("""mFocusedApp=.*?(\S+)/""")
+
+        // Extract current focus info
+        mCurrentFocus.find(dump)?.let {
+            result.put("current_focus_window", it.groupValues[1])
+        }
+        mFocusedApp.find(dump)?.let {
+            result.put("current_focus_app", it.groupValues[1])
+        }
+
+        // Parse individual windows
+        val windowBlocks = dump.split("Window #")
+        for (block in windowBlocks) {
+            if (block.isBlank()) continue
+            val w = JSONObject()
+            val displayMatch = displayLine.find(block)
+            if (displayMatch != null) {
+                w.put("display_id", displayMatch.groupValues[1].toIntOrNull() ?: -1)
+            }
+            val packageMatch = packageLine.find(block)
+            if (packageMatch != null) {
+                w.put("package", packageMatch.groupValues[1])
+            }
+            if (w.length() > 0) {
+                windows.put(w)
+            }
+        }
+        result.put("windows", windows)
+        result.put("total_windows", windows.length())
+        return result.toString()
+    }
+
     private fun parseUiXml(xml: String, displayId: Int): JSONArray {
         // Step 1: find all <node> elements with flexible per-attribute extraction.
         // uiautomator dump attribute order varies across Android versions and
