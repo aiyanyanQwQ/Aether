@@ -401,6 +401,17 @@ class AetherSelfManagementTool(
                 } else {
                     current.agentModeUiTreeOnly
                 },
+                agentModeFreeform = if (
+                    patch.hasAny("freeform_mode", "agent_mode_freeform")
+                ) {
+                    patch.optBooleanAny(
+                        "freeform_mode",
+                        "agent_mode_freeform",
+                        current.agentModeFreeform,
+                    )
+                } else {
+                    current.agentModeFreeform
+                },
             )
 
             else -> return failure("Unsupported or read-only category '$category'.")
@@ -808,6 +819,7 @@ class AetherSelfManagementTool(
             .put("authorization_enabled", settings.agentModeAuthorizationEnabled)
             .put("authorization_method", settings.agentModeAuthorizationMethod.storageValue)
             .put("ui_tree_only", settings.agentModeUiTreeOnly)
+            .put("freeform_mode", settings.agentModeFreeform)
             .put("authorization", agentModeAuthorizationStateJson(agentModeController.authorizationState.value))
             .put("display", agentModeDisplayStateJson(agentModeController.displayState.value))
 

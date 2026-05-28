@@ -137,6 +137,7 @@ data class AppSettings(
     val agentModeAuthorizationEnabled: Boolean = false,
     val agentModeAuthorizationMethod: AgentModeAuthorizationMethod = AgentModeAuthorizationMethod.Shizuku,
     val agentModeUiTreeOnly: Boolean = false,
+    val agentModeFreeform: Boolean = false,
     val language: AppLanguage = defaultAppLanguage(),
     val themeMode: AppThemeMode = AppThemeMode.System,
     val defaultChatModelKey: String = "",

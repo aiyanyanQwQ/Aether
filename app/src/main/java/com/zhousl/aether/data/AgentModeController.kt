@@ -181,6 +181,15 @@ class AgentModeController(
     // apps can render on the virtual display without Aether's composable overlay.
     private var previewDetachedForApp: Boolean = false
     private var lastLaunchedPackageForDisplay: String? = null
+    // Freeform mode: component name for focus switching during input
+    private var lastLaunchedComponent: String? = null
+    // Cached Aether launcher component for returning focus after freeform input
+    private val aetherLauncherComponent: String by lazy {
+        val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)
+            ?: error("Cannot resolve Aether launcher activity.")
+        intent.component?.flattenToString()
+            ?: error("Cannot resolve Aether launcher component.")
+    }
 
     val displayState: StateFlow<AgentModeDisplayState> = _displayState.asStateFlow()
     val authorizationState: StateFlow<AgentModeAuthorizationState> = _authorizationState.asStateFlow()
@@ -241,32 +250,36 @@ class AgentModeController(
             "status" -> statusResult(settings)
             "list_apps", "apps", "installed_apps" -> listInstalledAppsResult(settings, arguments)
             "launch" -> {
-                ensureDisplay(settings)
                 val target = arguments.optString("target").trim()
                 if (target.isBlank()) {
                     invalidArguments("Missing required 'target' argument.")
+                } else if (settings.agentModeFreeform) {
+                    launchFreeform(settings, target)
+                    captureAfterDelay(settings, workspaceDirectory, delayMillis = 900)
                 } else {
-                    // Detach preview surface so the launched app renders on the
-                    // virtual display instead of being hidden behind Aether's composable.
+                    ensureDisplay(settings)
                     detachPreviewForLaunch(settings)
                     launchTarget(settings, target)
                     captureAfterDelay(settings, workspaceDirectory, delayMillis = 900)
                 }
             }
             "tap" -> {
-                val displayId = ensureDisplay(settings)
                 val x = normalizedX(arguments.optDouble("x", Double.NaN))
                 val y = normalizedY(arguments.optDouble("y", Double.NaN))
                 if (x == null || y == null) {
                     invalidArguments("Both 'x' and 'y' are required, using 0..1000 screen coordinates.")
+                } else if (settings.agentModeFreeform) {
+                    freeformInput(settings, "tap $x $y")
+                    updateCursorPosition(x, y, animationDurationMillis = 180)
+                    captureAfterDelay(settings, workspaceDirectory, delayMillis = 350)
                 } else {
+                    val displayId = ensureDisplay(settings)
                     requireAgentModeService(settings).tap(displayId, x, y)
                     updateCursorPosition(x, y, animationDurationMillis = 180)
                     captureAfterDelay(settings, workspaceDirectory, delayMillis = 350)
                 }
             }
             "swipe" -> {
-                val displayId = ensureDisplay(settings)
                 val x1 = normalizedX(arguments.optDouble("x1", Double.NaN))
                 val y1 = normalizedY(arguments.optDouble("y1", Double.NaN))
                 val x2 = normalizedX(arguments.optDouble("x2", Double.NaN))
@@ -275,7 +288,16 @@ class AgentModeController(
                     .coerceIn(50, 10_000)
                 if (x1 == null || y1 == null || x2 == null || y2 == null) {
                     invalidArguments("x1, y1, x2, and y2 are required, using 0..1000 screen coordinates.")
+                } else if (settings.agentModeFreeform) {
+                    updateCursorPosition(x1, y1, animationDurationMillis = 80)
+                    controllerScope.launch {
+                        delay(40)
+                        updateCursorPosition(x2, y2, animationDurationMillis = durationMs)
+                    }
+                    freeformInput(settings, "swipe $x1 $y1 $x2 $y2 $durationMs")
+                    captureAfterDelay(settings, workspaceDirectory, delayMillis = durationMs.toLong() + 250)
                 } else {
+                    val displayId = ensureDisplay(settings)
                     updateCursorPosition(x1, y1, animationDurationMillis = 80)
                     controllerScope.launch {
                         delay(40)
@@ -286,44 +308,60 @@ class AgentModeController(
                 }
             }
             "key" -> {
-                val displayId = ensureDisplay(settings)
                 val keyCode = arguments.optString("key").trim()
                 if (keyCode.isBlank()) {
                     invalidArguments("Missing required 'key' argument.")
+                } else if (settings.agentModeFreeform) {
+                    freeformInput(settings, "keyevent $keyCode")
+                    captureAfterDelay(settings, workspaceDirectory, delayMillis = 300)
                 } else {
+                    val displayId = ensureDisplay(settings)
                     requireAgentModeService(settings).key(displayId, keyCode)
                     captureAfterDelay(settings, workspaceDirectory, delayMillis = 300)
                 }
             }
             "text" -> {
-                val displayId = ensureDisplay(settings)
                 val text = arguments.optString("text")
                 if (text.isBlank()) {
                     invalidArguments("Missing required 'text' argument.")
+                } else if (settings.agentModeFreeform) {
+                    // Use a temp approach: replace %s in a base64 command
+                    val b64 = android.util.Base64.encodeToString(
+                        text.toByteArray(), android.util.Base64.NO_WRAP
+                    )
+                    freeformInput(settings, "text \"\$(echo $b64 | base64 -d)\"")
+                    captureAfterDelay(settings, workspaceDirectory, delayMillis = 350)
                 } else {
+                    val displayId = ensureDisplay(settings)
                     requireAgentModeService(settings).text(displayId, text)
                     captureAfterDelay(settings, workspaceDirectory, delayMillis = 350)
                 }
             }
             "screenshot" -> {
-                ensureDisplay(settings)
+                if (!settings.agentModeFreeform) {
+                    ensureDisplay(settings)
+                }
                 captureAfterDelay(settings, workspaceDirectory, delayMillis = 0)
             }
             "dump_ui_tree", "ui_tree", "elements" -> {
-                val displayId = ensureDisplay(settings)
-                val elements = dumpUiTreeWithPreviewHidden(settings, displayId)
-                JSONObject().apply {
-                    put("ok", true)
-                    put("display_id", displayId)
-                    put("target_package", lastLaunchedPackageForDisplay)
-                    put("ui_tree_elements", elements)
-                    put("accessibility_windows", accessibilityWindowDiagnostics())
-                    put("dumpsys_window_diagnostics", runCatching {
-                        requireAgentModeService(settings).listWindowsDiagnosticsJson()
-                            .let { JSONObject(it) }
-                    }.getOrElse { JSONObject().apply { put("error", it.message) } })
-                    put("stdout", "UI tree dumped for display $displayId with ${elements.length()} interactive elements.")
-                }.toString()
+                if (settings.agentModeFreeform) {
+                    freeformDumpUiTree(settings)
+                } else {
+                    val displayId = ensureDisplay(settings)
+                    val elements = dumpUiTreeWithPreviewHidden(settings, displayId)
+                    JSONObject().apply {
+                        put("ok", true)
+                        put("display_id", displayId)
+                        put("target_package", lastLaunchedPackageForDisplay)
+                        put("ui_tree_elements", elements)
+                        put("accessibility_windows", accessibilityWindowDiagnostics())
+                        put("dumpsys_window_diagnostics", runCatching {
+                            requireAgentModeService(settings).listWindowsDiagnosticsJson()
+                                .let { JSONObject(it) }
+                        }.getOrElse { JSONObject().apply { put("error", it.message) } })
+                        put("stdout", "UI tree dumped for display $displayId with ${elements.length()} interactive elements.")
+                    }.toString()
+                }
             }
             "stop" -> {
                 releaseDisplay()
@@ -582,6 +620,65 @@ class AgentModeController(
             ?: error("No launchable app matched '$target'. Try a package name such as com.android.chrome, or a shorter app label.")
         requireAgentModeService(settings).launchPackage(launchPackage, displayId)
         lastLaunchedPackageForDisplay = launchPackage
+    }
+
+    // ── Freeform mode helpers ───────────────────────────────────────────
+
+    private suspend fun launchFreeform(
+        settings: AppSettings,
+        target: String,
+    ) {
+        val launchPackage = resolveLaunchPackage(settings, target)
+            ?: error("No launchable app matched '$target'.")
+        val intent = context.packageManager.getLaunchIntentForPackage(launchPackage)
+            ?: error("No launchable activity for $launchPackage.")
+        val component = intent.component?.flattenToString()
+            ?: error("Cannot resolve component for $launchPackage.")
+        lastLaunchedPackageForDisplay = launchPackage
+        lastLaunchedComponent = component
+        // Launch in freeform windowing mode on the main display.
+        requireAgentModeService(settings).runInputCommand(
+            "am start --windowingMode 5 -n $component"
+        )
+    }
+
+    /**
+     * Execute an [input] shell command on the main display, temporarily
+     * switching focus to the freeform target app so the input event lands
+     * on the correct window, then returning focus to Aether.
+     */
+    private suspend fun freeformInput(
+        settings: AppSettings,
+        inputCmd: String,
+    ) {
+        val component = lastLaunchedComponent
+            ?: error("No app launched yet. Use launch first.")
+        // Escape single quotes in the input command by wrapping in double quotes.
+        // The inputCmd is already built by the action handlers (e.g. "tap 500 800").
+        val escapedCmd = inputCmd.replace("'", "'\\''")
+        // Focus target → input → focus Aether back.  The semicolon-chained
+        // shell commands keep the total latency around 200-400 ms per action.
+        requireAgentModeService(settings).runInputCommand(
+            "am start --windowingMode 5 -n $component ; sleep 0.08 ; input $escapedCmd ; am start -n $aetherLauncherComponent"
+        )
+    }
+
+    /** Dump the UI tree from the main display (display 0) and filter to the target app. */
+    private suspend fun freeformDumpUiTree(settings: AppSettings): String {
+        // dumpUiTree(0) uses uiautomator dump --display 0 which captures all
+        // windows on the main display (including freeform apps).
+        val rawElements = JSONArray(
+            requireAgentModeService(settings).dumpUiTree(0)
+        )
+        val filtered = filterUiTreeElements(rawElements, lastLaunchedPackageForDisplay)
+        return JSONObject().apply {
+            put("ok", true)
+            put("mode", "freeform")
+            put("display_id", 0)
+            put("target_package", lastLaunchedPackageForDisplay)
+            put("ui_tree_elements", filtered)
+            put("stdout", "UI tree dumped from main display (freeform mode) with ${filtered.length()} interactive elements.")
+        }.toString()
     }
 
     private suspend fun dumpUiTreeWithPreviewHidden(
@@ -850,31 +947,37 @@ class AgentModeController(
         delayMillis: Long,
     ): String {
         if (delayMillis > 0) delay(delayMillis)
-        val displayId = currentManagedDisplayId(settings)
+        val freeform = settings.agentModeFreeform
+        val displayId = if (freeform) 0 else currentManagedDisplayId(settings)
         val state = _displayState.value
         val uiTreeOnly = settings.agentModeUiTreeOnly
 
         if (uiTreeOnly) {
             // UI-tree-only path: skip the expensive screenshot capture entirely.
+            val elements = if (freeform) {
+                JSONArray(requireAgentModeService(settings).dumpUiTree(0))
+                    .let { filterUiTreeElements(it, lastLaunchedPackageForDisplay) }
+            } else {
+                dumpUiTreeWithPreviewHidden(settings, displayId!!)
+            }
             _displayState.value = state.copy(
-                isActive = displayId != null,
+                isActive = true,
                 displayId = displayId,
                 displays = currentDisplays(settings, displayId),
                 lastUpdatedMillis = System.currentTimeMillis(),
-                status = "Captured virtual display",
+                status = if (freeform) "Freeform UI tree" else "Captured virtual display",
             )
-            val elements = dumpUiTreeWithPreviewHidden(settings, displayId!!)
             return JSONObject().apply {
                 put("ok", true)
                 put("display_id", displayId)
+                put("mode", if (freeform) "freeform" else "virtual_display")
                 put("target_package", lastLaunchedPackageForDisplay)
                 put("width", state.width)
                 put("height", state.height)
                 state.cursorX?.let { put("cursor_x", it) }
                 state.cursorY?.let { put("cursor_y", it) }
                 put("ui_tree_elements", elements)
-                put("accessibility_windows", accessibilityWindowDiagnostics())
-                put("stdout", "Captured virtual display $displayId UI tree with " +
+                put("stdout", "Captured ${if (freeform) "main display (freeform)" else "virtual display $displayId"} UI tree with " +
                     "${elements.length()} interactive elements (UI-tree-only mode).")
             }.toString()
         }
@@ -882,7 +985,7 @@ class AgentModeController(
         // Screenshot path
         val captureId = "capture-${System.currentTimeMillis()}"
         val previewFile = File(cacheDirectory, "$captureId.$AgentModeCaptureExtension")
-        captureImageFile(settings, previewFile)
+        captureImageFile(settings, previewFile, displayId)
         if (!previewFile.isFile || previewFile.length() <= 0L) {
             error("Agent Mode screenshot capture produced an empty file.")
         }
@@ -902,11 +1005,12 @@ class AgentModeController(
             latestPreviewPath = previewPath,
             latestWorkspacePath = workspacePath,
             lastUpdatedMillis = System.currentTimeMillis(),
-            status = "Captured virtual display",
+            status = if (freeform) "Captured main display" else "Captured virtual display",
         )
         return JSONObject().apply {
             put("ok", true)
             put("display_id", displayId)
+            put("mode", if (freeform) "freeform" else "virtual_display")
             put("width", state.width)
             put("height", state.height)
             put("screenshot_path", workspacePath)
@@ -936,28 +1040,43 @@ class AgentModeController(
     private suspend fun captureImageFile(
         settings: AppSettings,
         outputFile: File,
+        displayId: Int = currentManagedDisplayId(settings) ?: ensureDisplay(settings),
     ) {
-        val displayId = ensureDisplay(settings)
         captureMutex.withLock {
             outputFile.parentFile?.mkdirs()
             runCatching { outputFile.delete() }
-            try {
-                ParcelFileDescriptor.open(
-                    outputFile,
-                    ParcelFileDescriptor.MODE_CREATE or
-                        ParcelFileDescriptor.MODE_WRITE_ONLY or
-                        ParcelFileDescriptor.MODE_TRUNCATE,
-                ).use { descriptor ->
-                    requireAgentModeService(settings).captureImageToFd(
-                        displayId,
-                        descriptor,
-                        AgentModeCaptureMaxEdge,
-                        AgentModeCaptureJpegQuality,
-                    )
+            if (displayId == 0 && settings.agentModeFreeform) {
+                // Use screencap via root for the physical display (freeform mode).
+                val tmpPath = "/data/local/tmp/aether_capture_$$.png"
+                requireAgentModeService(settings).runInputCommand(
+                    "screencap -p $tmpPath && chmod 644 $tmpPath"
+                )
+                delay(80)
+                val tmpFile = File(tmpPath)
+                try {
+                    tmpFile.copyTo(outputFile, overwrite = true)
+                } finally {
+                    runCatching { tmpFile.delete() }
                 }
-            } catch (throwable: Throwable) {
-                runCatching { outputFile.delete() }
-                throw throwable
+            } else {
+                try {
+                    ParcelFileDescriptor.open(
+                        outputFile,
+                        ParcelFileDescriptor.MODE_CREATE or
+                            ParcelFileDescriptor.MODE_WRITE_ONLY or
+                            ParcelFileDescriptor.MODE_TRUNCATE,
+                    ).use { descriptor ->
+                        requireAgentModeService(settings).captureImageToFd(
+                            displayId,
+                            descriptor,
+                            AgentModeCaptureMaxEdge,
+                            AgentModeCaptureJpegQuality,
+                        )
+                    }
+                } catch (throwable: Throwable) {
+                    runCatching { outputFile.delete() }
+                    throw throwable
+                }
             }
         }
     }
